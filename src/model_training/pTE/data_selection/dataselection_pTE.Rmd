@@ -1,0 +1,438 @@
+---
+title: "Dataselection pTE"
+output: html_document
+---
+
+```{r imports}
+#Notebook executed with: R 4.2.0 and Bioconductor 3.15
+require(BSgenome.Hsapiens.UCSC.hg38)
+require(GenomicRanges)
+require(rtracklayer)
+require(dplyr)
+require(seqinr)
+require(ggplot2)
+require(data.table)
+library(parallel)
+require(patchwork)
+require(ggplot2)
+
+setDTthreads(2)
+```
+
+```{r set dir}
+setwd("/groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/res/model_training/pTE/data_selection")
+```
+
+```{r blacklist}
+#check overlap with blacklist
+blacklist_file <- "/groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/ext_data/blacklists/hg38/ENCFF356LFX.bed"
+blacklist <- import.bed(blacklist_file)
+```
+
+
+```{r load promotors}
+
+#considr pol2 mRNAs
+gtf <- rtracklayer::import("/groups/stark/annotations/hg38/gencode.v28.primary_assembly.annotation.gtf.gz")
+gtf <- as.data.table(gtf)
+tss <- gtf[type=="transcript"]
+
+tss[strand=="-", start:= end]
+
+tss <- unique(tss[, .(seqnames, start, strand)])
+
+tss[strand=="+", start:= start-750]
+tss[strand=="+", end:= start+1000]
+tss[strand=="-", start:= start-250]
+tss[strand=="-", end:= start+1000]
+
+promotors <- GenomicRanges::makeGRangesFromDataFrame(tss)
+```
+
+
+
+```{r load windows }
+mTE_regcov_file <- "/groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/res/pseudobulks/mTE/Regions_coverage_mural_TE_cell_96h_rpm_norm.bed"
+pTE_regcov_file <- "/groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/res/pseudobulks/pTE/Regions_coverage_polar_cell_96h_rpm_norm.bed"
+whole_blastoid_regcov_file <- "/groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/res/pseudobulks/overall_blastoid/Regions_coverage_overall_cells_96h_rpm_norm.bed"
+
+
+mTE_regcov <- fread(mTE_regcov_file, nThread = 2) 
+pTE_regcov <- fread(pTE_regcov_file, nThread = 2) 
+whole_blastoid_regcov <- fread(whole_blastoid_regcov_file, nThread = 2)
+
+mTE_regcov[,start:=start+1]
+pTE_regcov[,start:=start+1]
+whole_blastoid_regcov[,start:=start+1]
+
+colnames(mTE_regcov) <- c("chr","start","end","name","score","strand", "ATAC_mTE")
+colnames(pTE_regcov) <- c("chr","start","end","name","score","strand", "ATAC_pTE")
+colnames(whole_blastoid_regcov) <- c("chr","start","end","name","score","strand", "ATAC_whole_blastoid")
+
+genome_bins <- mTE_regcov
+genome_bins$ATAC_pTE <- pTE_regcov$ATAC_pTE
+genome_bins$ATAC_whole_blastoid <- whole_blastoid_regcov$ATAC_whole_blastoid
+
+rm(mTE_regcov)
+rm(pTE_regcov)
+rm(whole_blastoid_regcov)
+
+genome_bins <- makeGRangesFromDataFrame(genome_bins, keep.extra.columns = T, seqinfo = Hsapiens@seqinfo)
+names(genome_bins) <- genome_bins$name
+
+#restrict to standard chromosomes
+genome_bins <- genome_bins[genome_bins@seqnames %in% c("chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9","chr10","chr11","chr12","chr13","chr14","chr15","chr16","chr17","chr18","chr19","chr20","chr21","chr22")]
+genome_bins <- genome_bins[width(genome_bins)==1001]
+#exclude blacklist overlapping windows
+genome_bins <- genome_bins[-unique(queryHits(findOverlaps(genome_bins,blacklist,type="any")))]
+```
+
+
+```{r exclude promotors}
+genome_bins <- subsetByOverlaps(genome_bins,promotors, type = "any", invert = TRUE)
+```
+
+```{r select specifically closed regions}
+
+open_cutoff <- 1
+epsilon <- 0.000001
+
+min_foldchange <- 5
+
+#foldchange
+foldchange <- genome_bins$ATAC_whole_blastoid/(genome_bins$ATAC_pTE+epsilon) 
+genome_bins$foldchange_pTE_whole_blastoid <- foldchange
+genome_bins_pTE_specclosed <- genome_bins[(foldchange > min_foldchange) & (genome_bins$ATAC_whole_blastoid>open_cutoff)] #2711 
+
+
+
+genome_bins_pTE_specclosed$class <- "pTE_spec_closed"
+
+```
+
+```{r select open regions}
+
+open_cutoff <- 2
+genome_bins_open <- genome_bins[genome_bins$ATAC_pTE > open_cutoff ]
+
+genome_bins_open$class <- "open"
+
+
+fraction_open <- length(genome_bins_open)/length(genome_bins)
+n_open <- length(genome_bins_open)
+```
+
+```{r identify pTE specifically open regions}
+
+open_cutoff <- 1.7 #invert log1p of 1, which is ~the openness of the gcm1 enhancer #2
+epsilon <- 0.000001
+
+min_foldchange <- 2.5
+
+
+#specifically open compared to all other tissues
+foldchange <- genome_bins$ATAC_pTE/(genome_bins$ATAC_whole_blastoid+epsilon)
+genome_bins$foldchange_whole_blastoid_pTE <- foldchange
+
+genome_bins_pTE_specopen <- genome_bins[(foldchange > min_foldchange) & (genome_bins$ATAC_pTE>open_cutoff)]
+genome_bins_pTE_specopen$class <- "pTE_specopen"
+
+```
+
+```{r sampling negatives}
+
+set.seed(45896)
+
+n_non_open <- as.integer(n_open*3)
+num_intervals <- 30
+n_non_open_per_interval <- as.integer(n_non_open/num_intervals)
+
+intervals <- seq(0, open_cutoff, length.out= num_intervals)
+
+#select data from a certain interval
+
+genome_bins_non_open <- genome_bins[1]
+
+for (i in 1:(length(intervals)-1)){
+  begin <- intervals[[i]]
+  end <- intervals[[i+1]]
+  genome_bins_interval <- genome_bins[(genome_bins$ATAC_pTE>=begin) & (genome_bins$ATAC_pTE<end)]
+  n_seqs_interv <- length(genome_bins_interval)
+  print(paste("begin:",begin, "end:",end,"n_seqs",n_seqs_interv))
+  print(head(genome_bins_interval))
+  
+  #sample seqs from interval
+  n_sample <- min(n_non_open_per_interval, length(genome_bins_interval))
+  
+  genome_bins_interval_sampled <- genome_bins_interval[sample(length(genome_bins_interval),n_sample,replace = FALSE)]
+  print(paste("length of sample", length(genome_bins_interval_sampled)))
+  genome_bins_non_open <- c(genome_bins_non_open, genome_bins_interval_sampled)
+}
+
+genome_bins_non_open$class <- "intermediate"
+```
+
+
+
+
+```{r identifyinf CpG rich closed regions}
+
+#set cutoffs for closed and CpG rich 
+# CpG count range: 40 and 160
+CG_range_upper_bound <-160
+CG_range_lower_bound <-60
+closed_cutoff <- 0.2
+
+
+#iterate over windows
+stepsize <- 2000000
+
+genome_bins_CG_rich_closed <- genome_bins[1]
+genome_bins_CG_rich_closed$Sequence<- getSeq(Hsapiens, genome_bins_CG_rich_closed)
+genome_bins_CG_rich_closed$CG_count <- vcountPattern("CG", genome_bins_CG_rich_closed$Sequence)
+
+for (i in 1:as.integer(length(genome_bins)/stepsize)){
+  
+  genome_bins_sample <- genome_bins[(i*stepsize+1):(i*stepsize+stepsize)]
+  print(i*stepsize)
+  
+  genome_bins_sample$Sequence <- getSeq(Hsapiens, genome_bins_sample)
+  genome_bins_sample$CG_count <- vcountPattern("CG", genome_bins_sample$Sequence)
+  
+  
+  #how many do meet the CG criterion?
+  selector <- (genome_bins_sample$CG_count>CG_range_lower_bound) & (genome_bins_sample$CG_count<CG_range_upper_bound) & (genome_bins_sample$ATAC_pTE<closed_cutoff)
+  genome_bins_sample <- genome_bins_sample[selector]
+
+  
+  mcols(genome_bins_sample) <- mcols(genome_bins_sample)[, !colnames(mcols(genome_bins_sample)) %in% "Sequence"]
+  mcols(genome_bins_sample) <- mcols(genome_bins_sample)[, !colnames(mcols(genome_bins_sample)) %in% "CG_count"]
+  
+  genome_bins_CG_rich_closed <- c(genome_bins_CG_rich_closed, genome_bins_sample)
+  print(length(genome_bins_CG_rich_closed))
+  
+}
+
+genome_bins_sample <- genome_bins[(i*stepsize):length(genome_bins)]
+genome_bins_sample$Sequence <- getSeq(Hsapiens, genome_bins_sample)
+genome_bins_sample$CG_count <- vcountPattern("CG", genome_bins_sample$Sequence)
+selector <- (genome_bins_sample$CG_count>CG_range_lower_bound) & (genome_bins_sample$CG_count<CG_range_upper_bound) & (genome_bins_sample$ATAC_pTE<closed_cutoff)
+genome_bins_sample <- genome_bins_sample[selector]
+mcols(genome_bins_sample) <- mcols(genome_bins_sample)[, !colnames(mcols(genome_bins_sample)) %in% "Sequence"]
+mcols(genome_bins_sample) <- mcols(genome_bins_sample)[, !colnames(mcols(genome_bins_sample)) %in% "CG_count"]
+genome_bins_CG_rich_closed <- c(genome_bins_CG_rich_closed, genome_bins_sample)
+
+#check if it behaves in the correct way
+genome_bins_CG_rich_closed$class <- "CG_rich_closed"
+#saveRDS(genome_bins_CG_rich_closed,"genome_bins_CG_rich_closed.rds")
+#genome_bins_CG_rich_closed <- readRDS("genome_bins_CG_rich_closed.rds")
+```
+
+```{r closed sequences}
+
+set.seed(45896)
+
+closed_cutoff <- 0.2
+
+n_closed <- length(genome_bins_CG_rich_closed)
+
+genome_bins_closed <- genome_bins[genome_bins$ATAC_pTE<closed_cutoff]
+
+genome_bins_closed_sample <-  genome_bins_closed[sample(length(genome_bins_closed),n_closed ,replace=FALSE)]
+genome_bins_closed_sample$class <- "closed"
+```
+
+```{r final training data}
+final_data <- c(genome_bins_open ,genome_bins_non_open, genome_bins_pTE_specclosed, genome_bins_CG_rich_closed, genome_bins_closed_sample, genome_bins_pTE_specopen)
+
+final_data$Sequence <- getSeq(Hsapiens,final_data)
+final_data$CG_count <- vcountPattern("CG", final_data$Sequence)
+
+final_data$ATAC_mTE_log1p <- log1p(final_data$ATAC_mTE)
+final_data$ATAC_pTE_log1p <- log1p(final_data$ATAC_pTE)
+
+acc_cgcont_corr <- cor(final_data$ATAC_pTE_log1p, final_data$CG_count)
+#hardly correlation left between accessibility and CpG content
+```
+
+```{r visualise score distribution}
+plot_df <- data.frame(mcols(final_data))
+
+distr_plot <- ggplot(plot_df) +
+  geom_density(aes(x=ATAC_pTE_log1p))+
+  ggtitle("Distribution of ATAC log1p signal in selected data")
+distr_plot
+
+distr_plot <- ggplot(plot_df) +
+  geom_density(aes(x=ATAC_pTE))+
+  ggtitle("Distribution of ATAC signal in selected data")
+distr_plot
+
+distr_plot <- ggplot(plot_df) +
+  geom_density(aes(x=ATAC_mTE_log1p))+
+  ggtitle("Distribution of ATAC log1p signal in selected data")
+distr_plot
+
+distr_plot <- ggplot(plot_df) +
+  geom_density(aes(x=ATAC_mTE))+
+  ggtitle("Distribution of ATAC signal in selected data")
+distr_plot
+
+distr_plot <- ggplot(plot_df) +
+  geom_point(aes(x=ATAC_pTE_log1p, y= CG_count, colour = class), alpha=0.1, size=0.5)+
+  xlab("ATAC_pTE_log1p")+
+  ylab("CG count per sequence")+
+  ggtitle("CG count vs accessibility")
+distr_plot
+
+
+distr_plot <- ggplot(plot_df, aes(x = CG_count, color = class)) +
+  geom_density(data = subset(plot_df, class == "open")) +
+  geom_density(data = subset(plot_df, class == "non_open")) +
+  geom_density(data = subset(plot_df, class == "pTE_spec_closed")) +
+  geom_density(data = subset(plot_df, class == "CG_rich_closed"))+
+  ggtitle("CG content") +
+  #scale_color_manual(values = c("open" = "blue", "non_open" = "red", "pTE_spec_closed" = "green","CG_rich_closed"=="orange" )) +
+  #labs(color = "Class")
+
+distr_plot
+
+cor(final_data$ATAC_pTE_log1p, final_data$CG_count)
+
+```
+
+```{r add reverse-complement and generate sequences}
+
+#final_data <- readRDS("final_genome_bins_granges.rds")
+table(strand(final_data)) # so far only + strand entries
+#get + strand sequences
+
+final_data$Sequence <- getSeq(Hsapiens, final_data)
+
+final_data_rev <- final_data
+strand(final_data_rev) <- "-"
+final_data_rev$Sequence <- getSeq(Hsapiens, final_data_rev)
+
+final_sequences <- rbind(data.frame(final_data),data.frame(final_data_rev))
+final_sequences$ID <- paste(final_sequences$seqnames, final_sequences$start, final_sequences$end, final_sequences$strand, final_sequences$class, sep="_")
+```
+
+
+
+
+```{r  define folds}
+
+#final_sequences <- readRDS("final_sequences_fw_rv_df.rds")
+
+
+chrom_counts <- data.frame(table(final_sequences$seqnames))
+chrom_counts<-chrom_counts[chrom_counts$Freq>0,]
+
+chrom_counts_sorted <- chrom_counts[order(-chrom_counts$Freq),]
+
+
+big_chroms <- c("chr1","chr2","chr3","chr4","chr5","chr6","chr7","chr8","chr9","chr10","chr11")
+small_chroms <- rev(c("chr12","chr13","chr14","chr15","chr16","chr17","chr18","chr19","chr20","chr21","chr22"))#chromosomes with least counts
+n_chroms<-length(big_chroms)+length(small_chroms)
+
+fold_names <- lapply(as.vector(1:(n_chroms/2)), function(x){paste0("fold_",x)})
+
+#folds df defines pairings of chromosomes
+folds <- data.frame(
+  fold = unlist(fold_names),
+  big_chrom = as.vector(big_chroms),
+  small_chrom = as.vector(small_chroms)
+)
+
+#assign chromosomes to folds
+lookup_fold <- function(chrom){
+  fold_idx <- max(which(folds$small_chrom==chrom),which(folds$big_chrom==chrom))
+  fold_n <- folds[fold_idx,]$fold
+  return(fold_n)
+}
+chrom_counts$fold <- as.character(lapply(chrom_counts$Var1 ,lookup_fold))
+
+#visualise combined sizes of folds
+fold_counts <- ggplot(chrom_counts, aes(fill=Var1, y=Freq, x=fold)) + 
+    geom_bar(position="stack", stat="identity")+
+  ggtitle("Number of sequences in folds")+
+  ylab("Sequence counts")
+fold_counts
+```
+
+
+```{r write folds to file}
+
+#add fold column
+final_sequences <- as.data.table(final_sequences)
+folds_long <- as.data.table(folds)
+folds_long <- melt(folds_long, id.vars = "fold")
+folds_long <- folds_long[startsWith(folds_long$value, "chr"),c("fold","value")]
+
+#map seqname to fold
+final_sequences[folds_long, fold:= i.fold, on= "seqnames==value"]
+
+#remove non needed column
+final_sequences[,width:=NULL]
+final_sequences[,name:=NULL]
+final_sequences[,score:=NULL]
+
+#save to rds file
+#saveRDS(final_sequences , "final_sequences_fw_rv_folds_dt.rds")
+```
+
+
+
+
+```{r write folds to file in Test train val style write to fasta}
+
+fold_names<-c("fold01","fold02","fold03","fold04","fold05","fold06","fold07","fold08","fold09","fold10","fold11")
+folds <- data.frame(
+  fold = unlist(fold_names),
+  big_chrom = as.vector(big_chroms),
+  small_chrom = as.vector(small_chroms)
+)
+
+folds_long <- as.data.table(folds)
+folds_long <- melt(folds_long, id.vars = "fold")
+folds_long <- folds_long[startsWith(folds_long$value, "chr"),c("fold","value")]
+
+
+#map seqname to fold
+final_sequences[folds_long, fold:= i.fold, on= "seqnames==value"]
+
+fold_names<-c("fold01","fold02","fold03","fold04","fold05","fold06","fold07","fold08","fold09","fold10","fold11")
+
+for (i in 1:10){
+  testfold <- fold_names[[i]]
+  valfold <- fold_names[[i+1]]
+  
+  final_sequences_test<-final_sequences[final_sequences$fold==testfold,]
+  final_sequences_val<-final_sequences[final_sequences$fold==valfold,]
+  final_sequences_train<-final_sequences[!(final_sequences$fold==testfold | final_sequences$fold==valfold),]
+  
+  #test 
+  write.fasta(as.list(final_sequences_test$Sequence),
+                final_sequences_test$ID,
+                file.path("./fold_fa_txt_te_va_tr", paste0(testfold, "_sequences_", "Test", ".fa")))
+  
+
+  write.table(final_sequences_test[,.(ATAC_mTE_log1p, ATAC_pTE_log1p,class)], file.path("./fold_fa_txt_te_va_tr",paste0(testfold, "_sequences_activity_Test", ".txt")), sep="\t", row.names = F, quote = F)
+  
+
+  #val
+  write.fasta(as.list(final_sequences_val$Sequence),
+                final_sequences_val$ID,
+                file.path("./fold_fa_txt_te_va_tr", paste0(testfold, "_sequences_", "Val", ".fa")))
+  write.table(final_sequences_val[,.(ATAC_mTE_log1p, ATAC_pTE_log1p, class)], file.path("./fold_fa_txt_te_va_tr",paste0(testfold, "_sequences_activity_Val", ".txt")), sep="\t", row.names = F, quote = F)
+  
+  #train
+  write.fasta(as.list(final_sequences_train$Sequence),
+                final_sequences_train$ID,
+                file.path("./fold_fa_txt_te_va_tr", paste0(testfold, "_sequences_", "Train", ".fa")))
+  write.table(final_sequences_train[,.(ATAC_mTE_log1p, ATAC_pTE_log1p,class)], file.path("./fold_fa_txt_te_va_tr",paste0(testfold, "_sequences_activity_Train", ".txt")), sep="\t", row.names = F, quote = F)
+  print(paste(testfold, "finished"))
+}
+
+```
+

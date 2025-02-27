@@ -1,0 +1,3 @@
+/data/**/*.tsv.gz
+/ext_data/
+/res/

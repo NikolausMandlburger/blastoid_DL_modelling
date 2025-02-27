@@ -1,0 +1,117 @@
+---
+title: "Dataselection pTE vs mTE diffacc"
+output: html_document
+---
+
+```{r imports}
+#Notebook executed with: R 4.2.0 and Bioconductor 3.15
+require(BSgenome.Hsapiens.UCSC.hg38)
+require(GenomicRanges)
+require(rtracklayer)
+require(dplyr)
+require(seqinr)
+require(ggplot2)
+require(data.table)
+library(parallel)
+require(patchwork)
+require(ggplot2)
+
+setDTthreads(2)
+```
+
+```{r set dir}
+setwd("/groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/res/model_training/pTE/data_selection")
+```
+
+```{r blacklist}
+#check overlap with blacklist
+blacklist_file <- "/groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/ext_data/blacklists/hg38/ENCFF356LFX.bed"
+blacklist <- import.bed(blacklist_file)
+```
+
+
+```{r load promotors}
+
+#considr pol2 mRNAs
+gtf <- rtracklayer::import("/groups/stark/annotations/hg38/gencode.v28.primary_assembly.annotation.gtf.gz")
+gtf <- as.data.table(gtf)
+tss <- gtf[type=="transcript"]
+
+tss[strand=="-", start:= end]
+
+tss <- unique(tss[, .(seqnames, start, strand)])
+
+tss[strand=="+", start:= start-750]
+tss[strand=="+", end:= start+1000]
+tss[strand=="-", start:= start-250]
+tss[strand=="-", end:= start+1000]
+
+promotors <- GenomicRanges::makeGRangesFromDataFrame(tss)
+```
+
+
+
+```{r load windows }
+mTE_regcov_file <- "/groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/res/pseudobulks/mTE/Regions_coverage_mural_TE_cell_96h_rpm_norm.bed"
+pTE_regcov_file <- "/groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/res/pseudobulks/pTE/Regions_coverage_polar_cell_96h_rpm_norm.bed"
+whole_blastoid_regcov_file <- "/groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/res/pseudobulks/overall_blastoid/Regions_coverage_overall_cells_96h_rpm_norm.bed"
+
+mTE_regcov <- fread(mTE_regcov_file, nThread = 2) 
+pTE_regcov <- fread(pTE_regcov_file, nThread = 2) 
+whole_blastoid_regcov <- fread(whole_blastoid_regcov_file, nThread = 2)
+
+mTE_regcov[,start:=start+1]
+pTE_regcov[,start:=start+1]
+whole_blastoid_regcov[,start:=start+1]
+
+colnames(mTE_regcov) <- c("chr","start","end","name","score","strand", "ATAC_mTE")
+colnames(pTE_regcov) <- c("chr","start","end","name","score","strand", "ATAC_pTE")
+colnames(whole_blastoid_regcov) <- c("chr","start","end","name","score","strand", "ATAC_whole_blastoid")
+
+genome_bins <- mTE_regcov
+genome_bins$ATAC_pTE <- pTE_regcov$ATAC_pTE
+genome_bins$ATAC_whole_blastoid <- whole_blastoid_regcov$ATAC_whole_blastoid
+
+rm(mTE_regcov)
+rm(pTE_regcov)
+rm(whole_blastoid_regcov)
+
+genome_bins <- makeGRangesFromDataFrame(genome_bins, keep.extra.columns = T, seqinfo = Hsapiens@seqinfo)
+names(genome_bins) <- genome_bins$name
+
+#restrict to standard chromosomes
+genome_bins <- genome_bins[genome_bins@seqnames %in% c("chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9","chr10","chr11","chr12","chr13","chr14","chr15","chr16","chr17","chr18","chr19","chr20","chr21","chr22")]
+genome_bins <- genome_bins[width(genome_bins)==1001]
+#exclude blacklist overlapping windows
+genome_bins <- genome_bins[-unique(queryHits(findOverlaps(genome_bins,blacklist,type="any")))]
+```
+
+```{r exclude promotors}
+genome_bins <- subsetByOverlaps(genome_bins,promotors, type = "any", invert = TRUE)
+```
+
+```{r identify pTE specifically open regions relative to mTE}
+open_cutoff <- 1.2
+epsilon <- 0.000001
+min_foldchange <- 2
+
+#specifically open compared to mTE
+foldchange <- genome_bins$ATAC_pTE/(genome_bins$ATAC_mTE+epsilon)
+genome_bins$foldchange_mTE_pTE <- foldchange
+genome_bins_pTE_specopen_vs_mTE <- genome_bins[(foldchange > min_foldchange) & (genome_bins$ATAC_pTE>open_cutoff)]
+```
+
+
+```{r save pTE specific open regions to fasta} 
+genome_bins_pTE_specopen_vs_mTE$Sequence <- getSeq(Hsapiens, genome_bins_pTE_specopen_vs_mTE)
+genome_bins_pTE_specopen_vs_mTE_rv <- genome_bins_pTE_specopen_vs_mTE
+strand(genome_bins_pTE_specopen_vs_mTE_rv) <- "-"
+genome_bins_pTE_specopen_vs_mTE_rv$Sequence <- getSeq(Hsapiens, genome_bins_pTE_specopen_vs_mTE_rv)
+
+genome_bins_pTE_specopen_vs_mTE_fw_rv <- rbind(data.frame(genome_bins_pTE_specopen_vs_mTE),data.frame(genome_bins_pTE_specopen_vs_mTE_rv))
+genome_bins_pTE_specopen_vs_mTE_fw_rv$ID <- paste(genome_bins_pTE_specopen_vs_mTE_fw_rv$seqnames, genome_bins_pTE_specopen_vs_mTE_fw_rv$start, genome_bins_pTE_specopen_vs_mTE_fw_rv$end, genome_bins_pTE_specopen_vs_mTE_fw_rv$strand, sep="_")
+
+write.fasta(as.list(genome_bins_pTE_specopen_vs_mTE_fw_rv$Sequence),
+                genome_bins_pTE_specopen_vs_mTE_fw_rv$ID,
+                file.path("./pTE_specopen_vs_mTE.fa"))
+```

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#SBATCH --chdir /groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/src/motif_discovery/pTE/pTE_specopen_vs_mTE
+#SBATCH --job-name modisco_pTEspec
+#SBATCH --mem=60G
+#SBATCH --time=4:20:00
+modisco motifs -s /groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/res/motif_discovery/pTE_specopen_vs_mTE/attribution_profiles/pTE_specopen_vs_mTE_onehot.npz -a /groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/res/motif_discovery/pTE_specopen_vs_mTE/attribution_profiles/pTE_specopen_vs_mTE_contrib.npz -n 50000 -o /groups/stark/nikolaus.mandlburger/Projects/blastoid_project/blastoid_DL_modelling/res/motif_discovery/pTE_specopen_vs_mTE/modisco/modisco_results_pTEspec.h5
+
+# submit-command is: sbatch  -e ./log/tmp.rgA53Vodez.err -o ./log/tmp.rgA53Vodez.out ./log/tmp.rgA53Vodez

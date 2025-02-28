@@ -1,6 +1,12 @@
-/data/**/*.tsv.gz
-/ext_data/
-/res/
+data/**
+!data/**/
+!data/**/readme.txt
 
-/res/**/*.npz/
-/res/pseudobulks
+ext_data/**
+!ext_data/**/
+!ext_data/**/readme.txt
+
+res/**
+!res/**/
+!res/**/readme.txt
+

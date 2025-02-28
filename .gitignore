@@ -15,3 +15,6 @@ res/**
 !res/primate_sequence_variant_prediction/GCM1/predictions/*
 !res/primate_sequence_variant_prediction/GRHL1/predictions/*
 !res/primate_sequence_variant_prediction/TCF7L2/predictions/*
+
+!res/motif_discovery/pTE_open_regions/modisco/*
+!res/motif_discovery/pTE_specopen_vs_mTE/modisco/*

@@ -12,3 +12,6 @@ res/**
 !res/model_training/pTE/model_training/trained_models/*h5
 !res/model_training/pTE/model_training/trained_models/*json
 
+!res/primate_sequence_variant_prediction/GCM1/predictions/*
+!res/primate_sequence_variant_prediction/GRHL1/predictions/*
+!res/primate_sequence_variant_prediction/TCF7L2/predictions/*

@@ -1,5 +1,5 @@
 ## Computational modeling of sequence encoding of chromatin accessibility in blastoid cell types
-
+<br><br>
 This repository contains the code for the deep learning based analyses of the paper <b>"PLACEHOLDER"</b>,<br>
 This includes preprocessing for and training of DeepSTARR type models for chromatin accessibility prediction from sequence as well as downstream application of<br> 
 these models for de novo motif discovery as well as variant effect predictions of enhancer candidates across different primate species.<br>

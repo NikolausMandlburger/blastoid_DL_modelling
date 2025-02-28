@@ -1,3 +1,6 @@
 /data/**/*.tsv.gz
 /ext_data/
 /res/
+
+/res/**/*.npz/
+/res/pseudobulks

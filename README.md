@@ -23,4 +23,4 @@ Contains...<br>
     - /res/primate_sequence_variant_prediction/GRHL1/predictions
     - /res/primate_sequence_variant_prediction/TCF7L2/predictions
 
-<br><b>Raw data and intermediary data files are not contained in the repository for space reasons</b><br>however readme.txt files distributed throughout the different directories of the repository hold information on which intermediary files are expected, how they are generated and what they are.
+<br><b>Raw data and intermediary data files are not contained in the repository for space reasons</b><br>however readme.txt files distributed throughout the different directories of the repository hold information on intermediary files, how they are generated and what they are.

@@ -9,4 +9,6 @@ ext_data/**
 res/**
 !res/**/
 !res/**/readme.txt
+!res/model_training/pTE/model_training/trained_models/*h5
+!res/model_training/pTE/model_training/trained_models/*json
 

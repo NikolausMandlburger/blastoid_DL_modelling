@@ -14,12 +14,10 @@ model training, motif discovery and cross species variant effect prediction.<br>
 <u>res:</u><br>
 Contains...<br>
 - trained pTE accessibility models (keras models, weights in h5 format, structure in json format) 
-    - /res/model_training/pTE/model_training/trained_models<br>
-<br>
+    - /res/model_training/pTE/model_training/trained_models
 - Final results of motif discovery
     - /res/motif_discovery/pTE_specopen_vs_mTE/modisco
     - /res/motif_discovery/pTE_open_regions/modisco<br>
-<br>
 - Final results of cross species variant effect prediction
     - /res/primate_sequence_variant_prediction/GCM1/predictions
     - /res/primate_sequence_variant_prediction/GRHL1/predictions

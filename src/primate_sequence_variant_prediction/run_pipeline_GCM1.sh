@@ -68,3 +68,4 @@ for CAND_FA in $OUTD/*shift_0.fa;do
     echo $PREFIX;
     $MYBSUB -m 30 -n preds_${PREFIX} -o ${OUTD}/log -T 00:15:00  "$PREDICTIONS_SCRIPT --chromosome $CHROM --model_dir $MODELDIR --res_dir $OUTD --ROI_name $PREFIX"
 done
+

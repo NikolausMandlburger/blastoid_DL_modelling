@@ -1,4 +1,4 @@
-## Computational modeling of sequence encoding of chromatin accessibility in blastoid cell types
+# Computational modeling of sequence encoding of chromatin accessibility in blastoid cell types
 <br><br>
 This repository contains the code for the deep learning based analyses of the paper <b>"The molecular determinants and evolution of timing of human blastocyst implantation"</b>,<br>
 This includes preprocessing for and training of DeepSTARR type models for chromatin accessibility prediction from sequence as well as downstream application of<br> 
@@ -24,8 +24,8 @@ Contains...<br>
     - /res/primate_sequence_variant_prediction/TCF7L2/predictions
 
 <br><b>Raw data and intermediary data files are not contained in the repository for space reasons</b><br>however readme.txt files distributed throughout the different directories of the repository hold information on intermediary files, how they are generated and what they are.
-
-### Methods details
+<br>
+## Methods details
 
 Training DeepSTARR models:<br>
 
